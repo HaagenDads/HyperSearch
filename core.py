@@ -1,4 +1,3 @@
-__maintainer__ = "Rémi Piché-Taillefer"
 __status__ = "1.1.0 reviewed - Added methods to Protocol - Added custom fold compatibility - Restructured 'broad' parameter"
 __version__ = "1.1.3a"
 
