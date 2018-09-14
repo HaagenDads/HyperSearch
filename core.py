@@ -1,5 +1,7 @@
-__status__ = "1.1.0 reviewed - Added methods to Protocol - Added custom fold compatibility - Restructured 'broad' parameter"
-__version__ = "1.1.3a"
+__maintainer__ = "Rémi Piché-Taillefer"
+__status__ = "1.1.0 reviewed - Added methods to Protocol - Added custom fold compatibility - Restructured 'broad' parameter \
+                             - Even more fold functionnality "
+__version__ = "1.1.4c"
 
 """ This library contains functions used to effectively optimize hyperparameters. It was first conceived
 for XGBoost, but any machine learning problem, from regression to classification, could make use of
@@ -221,7 +223,7 @@ def _process_protocol(Xt, yt, structure, weights, params, ps):
         variable_tuner = Variable_tuning(Xt, yt, structure, weights)
 
         return variable_tuner.train(ps.varname, [params[v] for v in ps.varname], params=params, n_steps=ps.psteps, cv=ps.cv, 
-                                    len_lookup_grid=ps.len_lookup_grid, last_lookup_relat=ps.last_lookup_relat)
+                                    len_lookup_grid=ps.len_lookup_grid, last_lookup_grid=ps.last_lookup_grid)
 
     else:
         if ps.n_iter is None:
@@ -346,18 +348,22 @@ class Searcher:
 
         Args:
             Xt (pandas DataFrame): training variables;
-            yt (pandas DataFrame): response variable;
+            yt (numpy Array): response variable;
             structure (dict): contains 'estimator' (with fit and predict propreties) and 'scoring';
                 either a string if recognized by the estimator, or callable(y, y_pred, weights=None).
                 XGBoost estimators can have an 'early_stop' value for early_stopping. In that case, 
                 the scoring field is used as an early stop metric;
-            weights (numpy array): corresponding weights;
-            folds (numpy array): corresponding fold.
+            weights (numpy Array): corresponding weights;
+            folds (numpy Array): corresponding fold.
 
         Returns:
             (None) """
 
         self.folds = folds
+        if isinstance(weights, pd.DataFrame):
+            weights = weights.values[:,0]
+        if isinstance(yt, pd.DataFrame):
+            yt = yt.values[:,0]
         
         if type(structure['estimator']) in [type(xgb.XGBRegressor()), type(xgb.XGBClassifier())]:
             self.callback = self._searching_xgboost
@@ -474,12 +480,15 @@ class Searcher:
 
             if self.folds is None:
                 self.folds = [int(x*nfold) for x in self._uniform_array]
+                fold_groups = [[x] for x in range(nfold)]
+            else:
+                fold_groups = self._fold_params(nfold)['folds']
             
             scorecv = []
-
             for i in range(nfold):
                 # We want to fit on the training set, predict on the validation set, and evaluate validation's score
-                valid_index = np.array([x == i for x in self.folds])
+                # valid_index will correspond to an array of boolean.
+                train_index, valid_index = fold_groups[i]
 
                 # If we don't have weights, sending a None will still cause an error if we're not expecting it.
                 if self.weights is None:
@@ -488,10 +497,10 @@ class Searcher:
                     # Trying to find how the estimator calls its weights.
                     w_v_scoring = _get_weightname(self._scoring.__code__.co_varnames)
                     w_e_scoring = _get_weightname(estimator.fit.__code__.co_varnames)
-                    kwargs = {w_v_scoring: self.weights.loc[valid_index]}
-                    kwargs_fit = {w_e_scoring: self.weights.loc[~valid_index]}
+                    kwargs = {w_v_scoring: self.weights[valid_index]}
+                    kwargs_fit = {w_e_scoring: self.weights[train_index]}
 
-                estimator.fit(self.Xt.loc[~valid_index], self.yt[~valid_index], **kwargs_fit)
+                estimator.fit(self.Xt.loc[train_index], self.yt[train_index], **kwargs_fit)
 
                 pred = estimator.predict(self.Xt.loc[valid_index])
                 scorecv += [self._scoring(self.yt[valid_index], pred, **kwargs)]
@@ -515,8 +524,8 @@ class Searcher:
             sk_est = GridSearchCV(param_grid=self.param_grid, cv=fold, **self._commun_params)
         else:
             sk_est = RandomizedSearchCV(param_distributions=self.param_grid, n_iter=n_iter, cv=fold, **self._commun_params)
+            
         sk_est.fit(self.Xt, self.yt, sample_weight=self.weights)
-
         return {
             '_min_score': sk_est.best_score_,
             '_min_params': sk_est.best_params_
@@ -552,8 +561,8 @@ class Searcher:
             return structure['early_stop'], mean_squared_error
         else:
             return structure['early_stop'], structure['scoring']
-
-
+    
+    
 def _update_params(original_params, overriding_params):
     """ Updates parameters while not overriding directly on the original object. """
     results = original_params
@@ -670,7 +679,7 @@ class Variable_tuning:
         return params
 
 
-    def set_grid_dimensions(self, broad=None, len_lookup_grid=None, last_lookup_relat=None):
+    def set_grid_dimensions(self, broad=None, len_lookup_grid=None, last_lookup_grid=None):
         """ Unifies all different definition of the dimensions. These refer to the values checked at each
         iterations, e.g. the values that define [0.7692, 0.9091, 1.0, 1.1, 1.3] are its symmetrical length
         (len_grid: 5) and its last relativity (last_relat: 1.3). Computes from them the increment and the
@@ -682,7 +691,7 @@ class Variable_tuning:
             _kScale = [0.1, 0.1, 0.15, 0.1][broad]
         else:
             _kN = np.ceil((len_lookup_grid - 1)/2) + 1
-            _kScale = 2 * (last_lookup_relat - 1)/(_kN * (_kN - 1))
+            _kScale = 2 * (last_lookup_grid - 1)/(_kN * (_kN - 1))
         return _kN, _kScale
             
         
