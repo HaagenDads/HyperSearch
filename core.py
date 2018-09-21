@@ -1,7 +1,4 @@
-__maintainer__ = "Rémi Piché-Taillefer"
-__status__ = "1.1.0 reviewed - Added methods to Protocol - Added custom fold compatibility - Restructured 'broad' parameter \
-                             - Even more fold functionnality "
-__version__ = "1.1.4c"
+__version__ = "1.1.4e"
 
 """ This library contains functions used to effectively optimize hyperparameters. It was first conceived
 for XGBoost, but any machine learning problem, from regression to classification, could make use of
@@ -360,10 +357,7 @@ class Searcher:
             (None) """
 
         self.folds = folds
-        if isinstance(weights, pd.DataFrame):
-            weights = weights.values[:,0]
-        if isinstance(yt, pd.DataFrame):
-            yt = yt.values[:,0]
+        weights, yt = _get_numpy(weights, yt)
         
         if type(structure['estimator']) in [type(xgb.XGBRegressor()), type(xgb.XGBClassifier())]:
             self.callback = self._searching_xgboost
@@ -471,7 +465,8 @@ class Searcher:
         """ For other estimators like GAMs, naive grid search is prefered, as Sklearn's GridSearch doesn't
         encapsulates them correctly. Naive grid search (or random search) uses cross validation and returns
         the parameters that performed the best on average on the out-of-fold. """
-        
+                        
+            
         grid_score = []
         for index in range(n_iter):
 
@@ -480,7 +475,7 @@ class Searcher:
 
             if self.folds is None:
                 self.folds = [int(x*nfold) for x in self._uniform_array]
-                fold_groups = [[x] for x in range(nfold)]
+                fold_groups = self._fold_params(nfold)['folds']
             else:
                 fold_groups = self._fold_params(nfold)['folds']
             
@@ -500,9 +495,12 @@ class Searcher:
                     kwargs = {w_v_scoring: self.weights[valid_index]}
                     kwargs_fit = {w_e_scoring: self.weights[train_index]}
 
-                estimator.fit(self.Xt.loc[train_index], self.yt[train_index], **kwargs_fit)
+                global HELPyt, HELPxt
+                HELPxt = self.Xt.iloc[train_index]
+                HELPyt = self.yt[train_index]
+                estimator.fit(self.Xt.iloc[train_index], self.yt[train_index], **kwargs_fit)
 
-                pred = estimator.predict(self.Xt.loc[valid_index])
+                pred = estimator.predict(self.Xt.iloc[valid_index])
                 scorecv += [self._scoring(self.yt[valid_index], pred, **kwargs)]
 
             grid_score += [np.mean(scorecv)]
@@ -586,6 +584,16 @@ def _get_weightname(variables):
     print("Could not proprely put weights into estimator. Estimator.fit did not have an argument for \
           'weights', 'weight', 'sample_weight', 'sample_weights' nor 'w'.")
     return variables[2]
+
+
+def _get_numpy(*args):
+    out = []
+    for x in args:
+        if 'values' in dir(x):
+            out += [x.values]
+        else:
+            out += [x]
+    return out
             
 
 #   .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--. 
@@ -734,7 +742,7 @@ class Variable_tuning:
             # It will still be fine-tuned later, in the next 'step'.
             inner_params[var] = adj_opt
         return ceiled_variable, new_search_direction, inner_params
-
+    
     
     def _get_bounds(self, var, var_opt, var_ini):
         """Gets bounds from the cumulative scale and adjusts them accordingly"""
@@ -743,6 +751,7 @@ class Variable_tuning:
         higher_bound = var_ini * self.last_lookup_grid
         v = [lower_bound, higher_bound, var_opt, var_ini]
         return list(map(lambda x: _hyp_adjust(x, var, 0), v))
+   
 
 #   .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--.      .--. 
 # :::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\::::::::.\
